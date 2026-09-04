@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
+using Lumber.Loot;
 
 namespace Lumber.Core
 {
@@ -10,7 +12,17 @@ namespace Lumber.Core
         public int money = 25;
         public int level = 1;
         public int xp = 0;
-        public int axeTier = 0;
+
+        public List<AxeInstance> axes = new List<AxeInstance>();
+        public string equippedAxeId = "";
+        public int boxCount = 0;
+
+        public int lvlEndurance = 0;
+        public int lvlForce = 0;
+        public int lvlChance = 0;
+        public int lvlScierie = 0;
+        public int lvlPepiniere = 0;
+        public int lvlEntrepot = 0;
     }
 
     public static class SaveManager

@@ -51,22 +51,37 @@ façon PS1.
   (aucun asset 3D importé nécessaire), dispersés sur la carte
   (`ForestGenerator.cs`) avec évitement de chevauchement.
 - **Système d'arbre** (`Tree.cs`) : points de vie, réaction au coup, chute
-  animée, repousse après un délai.
+  animée, repousse après un délai (modulable par l'amélioration de camp
+  "Pépinière").
 - **Économie & progression** (`Economy/EconomyManager.cs`,
   `ExperienceManager.cs`) : argent gagné par bûche coupée, XP avec courbe de
   niveaux.
-- **Boutique de haches** (`Shop/ShopManager.cs`) : 6 paliers (bois → pierre →
-  fer → acier → or → légendaire), chacun plus rapide et plus puissant.
-- **Sauvegarde locale** (`Core/SaveManager.cs`) : argent, niveau, XP et hache
-  équipée sont sauvegardés en JSON (`Application.persistentDataPath`) et
-  rechargés au lancement, avec sauvegarde automatique périodique.
+- **Haches à rareté + caisses** (`Loot/AxeRarity.cs`, `AxeInstance.cs`,
+  `InventoryManager.cs`) : 5 raretés (Commune, Peu commune, Rare, Épique,
+  Légendaire), chacune avec une plage de dégâts/vitesse et une couleur. Chaque
+  arbre coupé a une chance de faire tomber une caisse ; on l'ouvre depuis le
+  menu pour obtenir une hache au tirage aléatoire pondéré par rareté. La
+  meilleure hache possédée s'équipe automatiquement.
+- **Améliorations bûcheron & camp** (`Progression/UpgradeManager.cs`) : la
+  boutique ne vend plus de haches — elle sert à monter en niveau des
+  statistiques permanentes, achetées avec l'argent :
+  - *Bûcheron* : Endurance (vitesse de sprint), Force (dégâts de hache bonus),
+    Chance (probabilité de caisse).
+  - *Camp* : Scierie (argent par bûche), Pépinière (repousse plus rapide),
+    Entrepôt (capacité de caisses).
+- **Sauvegarde locale** (`Core/SaveManager.cs`) : argent, niveau, XP, haches
+  possédées, hache équipée, caisses et niveaux d'amélioration sont sauvegardés
+  en JSON (`Application.persistentDataPath`) et rechargés au lancement, avec
+  sauvegarde automatique périodique.
 - **Rendu PS1** (`Rendering/PS1RenderEffects.cs` + shader
   `Shaders/PS1FlatLit.shader`) : la caméra est rendue dans une petite
   RenderTexture (240px de haut par défaut) puis ré-affichée en filtrage "point"
   → look pixelisé et anguleux ; le shader personnalisé fait un ombrage plat
   sans reflets, comme sur PS1.
-- **HUD & UI** (`UI/UIManager.cs`) : argent, niveau, barre d'XP, joystick,
-  pavé de visée, bouton de coupe, panneau boutique — tout construit par code.
+- **HUD & UI** (`UI/UIManager.cs`) : argent, hache équipée (colorée par
+  rareté), caisses, niveau, barre d'XP, joystick, pavé de visée, bouton de
+  coupe, et un menu à onglets (Caisses / Bûcheron / Camp) — tout construit
+  par code.
 
 ## Pour builder sur mobile
 

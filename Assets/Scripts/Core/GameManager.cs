@@ -2,7 +2,8 @@ using UnityEngine;
 using Lumber.Player;
 using Lumber.World;
 using Lumber.Economy;
-using Lumber.Shop;
+using Lumber.Loot;
+using Lumber.Progression;
 using Lumber.UI;
 using Lumber.Rendering;
 
@@ -14,11 +15,15 @@ namespace Lumber.Core
     {
         public static GameManager Instance { get; private set; }
 
+        private const float BaseBoxChance = 0.18f;
+        private const float BaseSprintMultiplier = 1.4f;
+
         private SaveData save;
         private EconomyManager economy;
         private ExperienceManager experience;
         private ForestGenerator forest;
-        private ShopManager shop;
+        private InventoryManager inventory;
+        private UpgradeManager upgrades;
         private FirstPersonController player;
         private AxeTool axeTool;
 
@@ -45,6 +50,9 @@ namespace Lumber.Core
             BuildForest();
             BuildUI();
             ApplyRenderStyle();
+
+            upgrades.OnUpgraded += ApplyUpgradeEffects;
+            ApplyUpgradeEffects();
         }
 
         private void ConfigureScreen()
@@ -91,7 +99,16 @@ namespace Lumber.Core
             experience = gameObject.AddComponent<ExperienceManager>();
             experience.Init(save.level, save.xp);
 
-            shop = gameObject.AddComponent<ShopManager>();
+            upgrades = gameObject.AddComponent<UpgradeManager>();
+            upgrades.Init(economy);
+            upgrades.SetLevel("endurance", save.lvlEndurance);
+            upgrades.SetLevel("force", save.lvlForce);
+            upgrades.SetLevel("chance", save.lvlChance);
+            upgrades.SetLevel("scierie", save.lvlScierie);
+            upgrades.SetLevel("pepiniere", save.lvlPepiniere);
+            upgrades.SetLevel("entrepot", save.lvlEntrepot);
+
+            inventory = gameObject.AddComponent<InventoryManager>();
         }
 
         private void SpawnPlayer()
@@ -133,8 +150,7 @@ namespace Lumber.Core
             axeTool = camGo.AddComponent<AxeTool>();
             axeTool.swingPivot = axeGo.transform;
 
-            int tierIndex = Mathf.Clamp(save.axeTier, 0, 5);
-            shop.Init(axeTool, economy, tierIndex);
+            inventory.Init(axeTool, save.boxCount, save.axes, save.equippedAxeId, upgrades.BoxCapacity);
         }
 
         private void BuildForest()
@@ -157,15 +173,21 @@ namespace Lumber.Core
 
         private void HandleTreeFelled(Tree tree)
         {
-            economy.Add(tree.woodValue);
+            economy.Add(Mathf.RoundToInt(tree.woodValue * upgrades.MoneyMultiplier));
             experience.AddXp(tree.xpValue);
+
+            float boxChance = BaseBoxChance + upgrades.BoxChanceBonus;
+            if (Random.value < boxChance)
+                inventory.AddBox();
+
+            SaveNow();
         }
 
         private void BuildUI()
         {
             var uiGo = new GameObject("UI");
             var ui = uiGo.AddComponent<UIManager>();
-            ui.Build(player, axeTool, shop);
+            ui.Build(player, axeTool, inventory, upgrades);
         }
 
         private void ApplyRenderStyle()
@@ -173,6 +195,14 @@ namespace Lumber.Core
             var cam = Camera.main;
             if (cam != null)
                 cam.gameObject.AddComponent<PS1RenderEffects>();
+        }
+
+        private void ApplyUpgradeEffects()
+        {
+            player.sprintMultiplier = BaseSprintMultiplier + upgrades.SprintBonus;
+            inventory.SetForceBonusPercent(upgrades.ForceBonusPercent);
+            inventory.SetMaxBoxCapacity(upgrades.BoxCapacity);
+            Tree.RegrowMultiplier = upgrades.RegrowTimeMultiplier;
         }
 
         private void Update()
@@ -197,7 +227,19 @@ namespace Lumber.Core
             save.money = economy.Money;
             save.level = experience.Level;
             save.xp = experience.Xp;
-            save.axeTier = shop.CurrentTierIndex;
+
+            save.axes.Clear();
+            save.axes.AddRange(inventory.Axes);
+            save.equippedAxeId = inventory.EquippedId;
+            save.boxCount = inventory.BoxCount;
+
+            save.lvlEndurance = upgrades.GetLevel("endurance");
+            save.lvlForce = upgrades.GetLevel("force");
+            save.lvlChance = upgrades.GetLevel("chance");
+            save.lvlScierie = upgrades.GetLevel("scierie");
+            save.lvlPepiniere = upgrades.GetLevel("pepiniere");
+            save.lvlEntrepot = upgrades.GetLevel("entrepot");
+
             SaveManager.Save(save);
         }
 

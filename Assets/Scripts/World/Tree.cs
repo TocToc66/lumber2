@@ -8,6 +8,9 @@ namespace Lumber.World
     /// wood (money) + XP when felled, then regrows after a delay.
     public class Tree : MonoBehaviour
     {
+        /// Camp "Pepiniere" upgrade multiplies every tree's regrow wait (read at fell time).
+        public static float RegrowMultiplier = 1f;
+
         public int maxHealth = 40;
         public int woodValue = 4;
         public int xpValue = 8;
@@ -80,7 +83,7 @@ namespace Lumber.World
             }
 
             SetVisible(false);
-            yield return new WaitForSeconds(regrowTime);
+            yield return new WaitForSeconds(regrowTime * RegrowMultiplier);
 
             transform.localRotation = originalRotation;
             transform.localPosition = originalLocalPosition;

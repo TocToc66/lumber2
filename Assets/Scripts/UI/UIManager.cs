@@ -3,23 +3,40 @@ using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using Lumber.Player;
 using Lumber.Economy;
-using Lumber.Shop;
+using Lumber.Loot;
+using Lumber.Progression;
 
 namespace Lumber.UI
 {
-    /// Builds the entire HUD/controls/shop UI purely in code at runtime:
-    /// crosshair, money/level/XP bar, virtual joystick, look pad, chop button,
-    /// and a shop panel listing every axe tier.
+    /// Builds the entire HUD/controls/menu UI purely in code at runtime:
+    /// crosshair, money/level/XP/equipped-axe/box HUD, virtual joystick, look pad,
+    /// chop button, and a tabbed menu panel (Caisses / Bucheron / Camp).
     public class UIManager : MonoBehaviour
     {
         private Text moneyText;
+        private Text axeText;
+        private Text boxText;
         private Text levelText;
         private Slider xpSlider;
-        private GameObject shopPanel;
-        private Transform shopListParent;
 
-        public void Build(FirstPersonController player, AxeTool axe, ShopManager shop)
+        private GameObject menuPanel;
+        private Transform menuContent;
+        private string currentTab = "caisses";
+        private Text caissesCountLabel;
+        private Button openBoxButton;
+
+        private GameObject toast;
+        private Text toastText;
+        private float toastTimer;
+
+        private InventoryManager inventory;
+        private UpgradeManager upgrades;
+
+        public void Build(FirstPersonController player, AxeTool axe, InventoryManager inventoryManager, UpgradeManager upgradeManager)
         {
+            inventory = inventoryManager;
+            upgrades = upgradeManager;
+
             EnsureEventSystem();
 
             var canvasGo = new GameObject("HUDCanvas");
@@ -38,12 +55,29 @@ namespace Lumber.UI
             BuildJoystick(canvasGo.transform, player);
             BuildLookPad(canvasGo.transform, player);
             BuildChopButton(canvasGo.transform, axe);
-            BuildShopPanel(canvasGo.transform, shop);
+            BuildMenuPanel(canvasGo.transform);
+            BuildToast(canvasGo.transform);
 
             EconomyManager.Instance.OnMoneyChanged += UpdateMoney;
             ExperienceManager.Instance.OnXpChanged += UpdateXp;
+            inventory.OnInventoryChanged += RefreshHudAxe;
+            inventory.OnBoxCountChanged += _ => RefreshHudBoxes();
+            inventory.OnBoxOpened += HandleBoxOpened;
+
             UpdateMoney(EconomyManager.Instance.Money);
             UpdateXp(ExperienceManager.Instance.Xp, ExperienceManager.Instance.XpToNextLevel, ExperienceManager.Instance.Level);
+            RefreshHudAxe();
+            RefreshHudBoxes();
+        }
+
+        private void Update()
+        {
+            if (toastTimer > 0f)
+            {
+                toastTimer -= Time.deltaTime;
+                if (toastTimer <= 0f)
+                    toast.SetActive(false);
+            }
         }
 
         private void EnsureEventSystem()
@@ -88,9 +122,18 @@ namespace Lumber.UI
 
         private void BuildTopBar(Transform parent)
         {
-            var moneyRt = CreateRect(parent, "MoneyText", new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), new Vector2(300, 60), new Vector2(20, -20));
+            var moneyRt = CreateRect(parent, "MoneyText", new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), new Vector2(320, 50), new Vector2(20, -18));
             moneyText = moneyRt.gameObject.AddComponent<Text>();
-            SetupText(moneyText, 32, TextAnchor.UpperLeft);
+            SetupText(moneyText, 30, TextAnchor.UpperLeft);
+
+            var axeRt = CreateRect(parent, "AxeText", new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), new Vector2(320, 34), new Vector2(20, -60));
+            axeText = axeRt.gameObject.AddComponent<Text>();
+            SetupText(axeText, 20, TextAnchor.UpperLeft);
+
+            var boxRt = CreateRect(parent, "BoxText", new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1), new Vector2(320, 30), new Vector2(20, -92));
+            boxText = boxRt.gameObject.AddComponent<Text>();
+            SetupText(boxText, 18, TextAnchor.UpperLeft);
+            boxText.color = new Color(0.85f, 0.85f, 0.85f);
 
             var levelRt = CreateRect(parent, "LevelText", new Vector2(1, 1), new Vector2(1, 1), new Vector2(1, 1), new Vector2(220, 40), new Vector2(-20, -20));
             levelText = levelRt.gameObject.AddComponent<Text>();
@@ -149,7 +192,6 @@ namespace Lumber.UI
             var lookPad = pad.gameObject.AddComponent<LookPad>();
             lookPad.target = player;
 
-            // Push behind every other control so buttons/joystick on top always win touches.
             pad.SetAsFirstSibling();
         }
 
@@ -167,9 +209,13 @@ namespace Lumber.UI
             label.text = "COUPER";
         }
 
-        private void BuildShopPanel(Transform parent, ShopManager shop)
+        // ---------------------------------------------------------------
+        // Menu panel: Caisses / Bucheron / Camp tabs
+        // ---------------------------------------------------------------
+
+        private void BuildMenuPanel(Transform parent)
         {
-            var toggleRt = CreateRect(parent, "ShopToggle", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(160, 50), new Vector2(0, -20));
+            var toggleRt = CreateRect(parent, "MenuToggle", new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(160, 50), new Vector2(0, -30));
             var toggleImg = toggleRt.gameObject.AddComponent<Image>();
             toggleImg.color = new Color(0.2f, 0.2f, 0.2f, 0.75f);
             var toggleBtn = toggleRt.gameObject.AddComponent<Button>();
@@ -177,93 +223,275 @@ namespace Lumber.UI
             var toggleLabelRt = CreateRect(toggleRt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             var toggleLabel = toggleLabelRt.gameObject.AddComponent<Text>();
             SetupText(toggleLabel, 22, TextAnchor.MiddleCenter);
-            toggleLabel.text = "BOUTIQUE";
+            toggleLabel.text = "MENU";
 
-            var panelRt = CreateRect(parent, "ShopPanel", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(560, 700), Vector2.zero);
+            var panelRt = CreateRect(parent, "MenuPanel", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(620, 760), Vector2.zero);
             var panelImg = panelRt.gameObject.AddComponent<Image>();
             panelImg.color = new Color(0.05f, 0.05f, 0.05f, 0.92f);
-            shopPanel = panelRt.gameObject;
-            shopPanel.SetActive(false);
+            menuPanel = panelRt.gameObject;
+            menuPanel.SetActive(false);
 
-            toggleBtn.onClick.AddListener(() => shopPanel.SetActive(!shopPanel.activeSelf));
+            toggleBtn.onClick.AddListener(() =>
+            {
+                menuPanel.SetActive(!menuPanel.activeSelf);
+                if (menuPanel.activeSelf) RefreshMenuContent();
+            });
 
             var closeRt = CreateRect(panelRt, "Close", new Vector2(1, 1), new Vector2(1, 1), new Vector2(1, 1), new Vector2(50, 50), new Vector2(-10, -10));
             var closeImg = closeRt.gameObject.AddComponent<Image>();
             closeImg.color = new Color(0.7f, 0.15f, 0.15f, 1f);
             var closeBtn = closeRt.gameObject.AddComponent<Button>();
-            closeBtn.onClick.AddListener(() => shopPanel.SetActive(false));
+            closeBtn.onClick.AddListener(() => menuPanel.SetActive(false));
 
             var closeLabelRt = CreateRect(closeRt, "X", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             var closeLabel = closeLabelRt.gameObject.AddComponent<Text>();
             SetupText(closeLabel, 26, TextAnchor.MiddleCenter);
             closeLabel.text = "X";
 
-            var titleRt = CreateRect(panelRt, "Title", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(0, 50), new Vector2(0, -10));
-            var titleText = titleRt.gameObject.AddComponent<Text>();
-            SetupText(titleText, 30, TextAnchor.MiddleCenter);
-            titleText.text = "Haches";
+            BuildTabButton(panelRt, "Caisses", "caisses", new Vector2(0f, 1f), new Vector2(1f / 3f, 1f));
+            BuildTabButton(panelRt, "Bucheron", "bucheron", new Vector2(1f / 3f, 1f), new Vector2(2f / 3f, 1f));
+            BuildTabButton(panelRt, "Camp", "camp", new Vector2(2f / 3f, 1f), new Vector2(1f, 1f));
 
-            shopListParent = panelRt;
-            RefreshShopRows(shop);
+            var contentRt = CreateRect(panelRt, "Content", new Vector2(0, 0), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(-30, 90), new Vector2(0, -95));
+            contentRt.offsetMin = new Vector2(15, 15);
+            contentRt.offsetMax = new Vector2(-15, -95);
+            contentRt.gameObject.AddComponent<RectMask2D>();
+            menuContent = contentRt;
 
-            shop.OnTierChanged += _ => RefreshShopRows(shop);
+            RefreshMenuContent();
         }
 
-        private void BuildShopRow(Transform parent, ShopManager shop, int index)
+        private void BuildTabButton(Transform parent, string label, string tabKey, Vector2 anchorMin, Vector2 anchorMax)
         {
-            var tier = shop.tiers[index];
-            float y = -80 - index * 90;
-            var rowRt = CreateRect(parent, "Row" + index, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(-40, 80), new Vector2(0, y));
-
-            var rowImg = rowRt.gameObject.AddComponent<Image>();
-            rowImg.color = new Color(1f, 1f, 1f, 0.06f);
-
-            var nameRt = CreateRect(rowRt, "Name", new Vector2(0, 0), new Vector2(0.6f, 1), new Vector2(0, 0.5f), Vector2.zero, Vector2.zero);
-            nameRt.offsetMin = new Vector2(20, nameRt.offsetMin.y);
-            var nameText = nameRt.gameObject.AddComponent<Text>();
-            SetupText(nameText, 22, TextAnchor.MiddleLeft);
-            float chopsPerSec = 1f / Mathf.Max(0.01f, tier.cooldown);
-            nameText.text = tier.tierName + "\nDegats " + tier.damage + " - Vitesse " + chopsPerSec.ToString("0.0") + "/s";
-
-            var buyRt = CreateRect(rowRt, "Buy", new Vector2(0.62f, 0.15f), new Vector2(0.98f, 0.85f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            var buyImg = buyRt.gameObject.AddComponent<Image>();
-            var buyBtn = buyRt.gameObject.AddComponent<Button>();
-
-            var buyLabelRt = CreateRect(buyRt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            var buyLabel = buyLabelRt.gameObject.AddComponent<Text>();
-            SetupText(buyLabel, 20, TextAnchor.MiddleCenter);
-
-            if (index <= shop.CurrentTierIndex)
+            var rt = CreateRect(parent, "Tab_" + tabKey, anchorMin, anchorMax, new Vector2(0.5f, 1f), new Vector2(-4, 60), new Vector2(0, -12));
+            var img = rt.gameObject.AddComponent<Image>();
+            img.color = tabKey == currentTab ? new Color(0.55f, 0.4f, 0.2f, 0.9f) : new Color(1f, 1f, 1f, 0.08f);
+            img.name = "TabBg";
+            var btn = rt.gameObject.AddComponent<Button>();
+            btn.onClick.AddListener(() =>
             {
-                buyImg.color = new Color(0.25f, 0.55f, 0.25f, 0.9f);
-                buyLabel.text = "Equipee";
-                buyBtn.interactable = false;
+                currentTab = tabKey;
+                RefreshMenuContent();
+            });
+
+            var labelRt = CreateRect(rt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var text = labelRt.gameObject.AddComponent<Text>();
+            SetupText(text, 20, TextAnchor.MiddleCenter);
+            text.text = label;
+        }
+
+        private void RefreshMenuContent()
+        {
+            if (menuContent == null) return;
+
+            for (int i = menuContent.childCount - 1; i >= 0; i--)
+                Destroy(menuContent.GetChild(i).gameObject);
+
+            RefreshTabHighlights();
+
+            if (currentTab == "caisses")
+                BuildCaissesTab();
+            else if (currentTab == "bucheron")
+                BuildUpgradeTab(upgrades.character);
+            else
+                BuildUpgradeTab(upgrades.camp);
+        }
+
+        private void RefreshTabHighlights()
+        {
+            if (menuPanel == null) return;
+            var panelT = menuPanel.transform;
+            string[] keys = { "caisses", "bucheron", "camp" };
+            foreach (var key in keys)
+            {
+                var tab = panelT.Find("Tab_" + key);
+                if (tab == null) continue;
+                var bg = tab.Find("TabBg");
+                var img = bg != null ? bg.GetComponent<Image>() : tab.GetComponent<Image>();
+                if (img != null)
+                    img.color = key == currentTab ? new Color(0.55f, 0.4f, 0.2f, 0.9f) : new Color(1f, 1f, 1f, 0.08f);
             }
-            else if (index == shop.CurrentTierIndex + 1)
+        }
+
+        private void BuildCaissesTab()
+        {
+            var headerRt = CreateRect(menuContent, "CaissesHeader", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(0, 90), new Vector2(0, 0));
+            caissesCountLabel = headerRt.gameObject.AddComponent<Text>();
+            SetupText(caissesCountLabel, 22, TextAnchor.UpperLeft);
+
+            var openRt = CreateRect(menuContent, "OpenBtn", new Vector2(1, 1), new Vector2(1, 1), new Vector2(1f, 1f), new Vector2(220, 56), new Vector2(0, -6));
+            var openImg = openRt.gameObject.AddComponent<Image>();
+            openBoxButton = openRt.gameObject.AddComponent<Button>();
+            var openLabelRt = CreateRect(openRt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var openLabel = openLabelRt.gameObject.AddComponent<Text>();
+            SetupText(openLabel, 20, TextAnchor.MiddleCenter);
+            openLabel.text = "Ouvrir une caisse";
+
+            bool canOpen = inventory.BoxCount > 0;
+            openImg.color = canOpen ? new Color(0.75f, 0.6f, 0.15f, 0.9f) : new Color(0.2f, 0.2f, 0.2f, 0.5f);
+            openBoxButton.interactable = canOpen;
+            openBoxButton.onClick.AddListener(() => inventory.OpenBox());
+
+            RefreshCaissesHeader();
+
+            var listTitleRt = CreateRect(menuContent, "ListTitle", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(0, 34), new Vector2(0, -100));
+            var listTitle = listTitleRt.gameObject.AddComponent<Text>();
+            SetupText(listTitle, 18, TextAnchor.UpperLeft);
+            listTitle.color = new Color(0.8f, 0.8f, 0.8f);
+            listTitle.text = "Haches trouvees (" + inventory.Axes.Count + ")";
+
+            int index = 0;
+            foreach (var axeInst in inventory.Axes)
             {
-                buyImg.color = new Color(0.75f, 0.6f, 0.15f, 0.9f);
-                buyLabel.text = tier.cost + " $";
-                buyBtn.onClick.AddListener(() => shop.TryBuyNext());
+                BuildAxeRow(menuContent, axeInst, 150 + index * 78);
+                index++;
+            }
+        }
+
+        private void RefreshCaissesHeader()
+        {
+            if (caissesCountLabel != null)
+                caissesCountLabel.text = "Caisses : " + inventory.BoxCount + " / " + inventory.MaxBoxCapacity;
+        }
+
+        private void BuildAxeRow(Transform parent, AxeInstance axeInst, float yOffset)
+        {
+            var rowRt = CreateRect(parent, "AxeRow", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(0, 70), new Vector2(0, -yOffset));
+            var rowImg = rowRt.gameObject.AddComponent<Image>();
+            bool equipped = axeInst.id == inventory.EquippedId;
+            rowImg.color = equipped ? new Color(0.3f, 0.4f, 0.2f, 0.7f) : new Color(1f, 1f, 1f, 0.06f);
+
+            var def = RarityInfo.Table[axeInst.rarity];
+
+            var swatchRt = CreateRect(rowRt, "Swatch", new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(16, 50), new Vector2(12, 0));
+            var swatchImg = swatchRt.gameObject.AddComponent<Image>();
+            swatchImg.color = def.color;
+
+            var nameRt = CreateRect(rowRt, "Name", new Vector2(0, 0), new Vector2(0.62f, 1), new Vector2(0, 0.5f), Vector2.zero, Vector2.zero);
+            nameRt.offsetMin = new Vector2(36, nameRt.offsetMin.y);
+            var nameText = nameRt.gameObject.AddComponent<Text>();
+            SetupText(nameText, 19, TextAnchor.MiddleLeft);
+            float chopsPerSec = 1f / Mathf.Max(0.01f, axeInst.cooldown);
+            nameText.text = axeInst.axeName + " (" + def.label + ")\nDegats " + axeInst.damage + " - " + chopsPerSec.ToString("0.0") + "/s";
+            nameText.color = def.color;
+
+            var actionRt = CreateRect(rowRt, "Action", new Vector2(0.64f, 0.15f), new Vector2(0.98f, 0.85f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var actionImg = actionRt.gameObject.AddComponent<Image>();
+            var actionLabelRt = CreateRect(actionRt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var actionLabel = actionLabelRt.gameObject.AddComponent<Text>();
+            SetupText(actionLabel, 18, TextAnchor.MiddleCenter);
+
+            if (equipped)
+            {
+                actionImg.color = new Color(0.25f, 0.55f, 0.25f, 0.9f);
+                actionLabel.text = "Equipee";
             }
             else
             {
-                buyImg.color = new Color(0.2f, 0.2f, 0.2f, 0.5f);
-                buyLabel.text = "Verrouillee";
-                buyBtn.interactable = false;
+                actionImg.color = new Color(0.3f, 0.3f, 0.3f, 0.8f);
+                actionLabel.text = "Equiper";
+                var btn = actionRt.gameObject.AddComponent<Button>();
+                btn.onClick.AddListener(() =>
+                {
+                    inventory.Equip(axeInst.id);
+                    RefreshMenuContent();
+                });
             }
         }
 
-        private void RefreshShopRows(ShopManager shop)
+        private void BuildUpgradeTab(System.Collections.Generic.List<UpgradeTrack> tracks)
         {
-            for (int i = shopListParent.childCount - 1; i >= 0; i--)
+            int index = 0;
+            foreach (var track in tracks)
             {
-                var child = shopListParent.GetChild(i);
-                if (child.name.StartsWith("Row"))
-                    Destroy(child.gameObject);
+                BuildUpgradeRow(menuContent, track, index * 100);
+                index++;
             }
+        }
 
-            for (int i = 0; i < shop.tiers.Count; i++)
-                BuildShopRow(shopListParent, shop, i);
+        private void BuildUpgradeRow(Transform parent, UpgradeTrack track, float yOffset)
+        {
+            var rowRt = CreateRect(parent, "UpgradeRow", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1f), new Vector2(0, 90), new Vector2(0, -yOffset));
+            var rowImg = rowRt.gameObject.AddComponent<Image>();
+            rowImg.color = new Color(1f, 1f, 1f, 0.06f);
+
+            var nameRt = CreateRect(rowRt, "Name", new Vector2(0, 0), new Vector2(0.62f, 1), new Vector2(0, 0.5f), Vector2.zero, Vector2.zero);
+            nameRt.offsetMin = new Vector2(20, nameRt.offsetMin.y);
+            var nameText = nameRt.gameObject.AddComponent<Text>();
+            SetupText(nameText, 20, TextAnchor.MiddleLeft);
+            nameText.text = track.label + " - Niveau " + track.level + "/" + track.maxLevel + "\n" + track.description;
+
+            var buyRt = CreateRect(rowRt, "Buy", new Vector2(0.64f, 0.15f), new Vector2(0.98f, 0.85f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var buyImg = buyRt.gameObject.AddComponent<Image>();
+            var buyLabelRt = CreateRect(buyRt, "Label", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            var buyLabel = buyLabelRt.gameObject.AddComponent<Text>();
+            SetupText(buyLabel, 19, TextAnchor.MiddleCenter);
+
+            if (track.level >= track.maxLevel)
+            {
+                buyImg.color = new Color(0.25f, 0.55f, 0.25f, 0.9f);
+                buyLabel.text = "MAX";
+            }
+            else
+            {
+                buyImg.color = new Color(0.75f, 0.6f, 0.15f, 0.9f);
+                buyLabel.text = track.CostForNextLevel() + " $";
+                var btn = buyRt.gameObject.AddComponent<Button>();
+                btn.onClick.AddListener(() =>
+                {
+                    upgrades.TryUpgrade(track);
+                    RefreshMenuContent();
+                });
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Toast (box reveal)
+        // ---------------------------------------------------------------
+
+        private void BuildToast(Transform parent)
+        {
+            var rt = CreateRect(parent, "Toast", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(460, 100), new Vector2(0, 240));
+            var img = rt.gameObject.AddComponent<Image>();
+            img.color = new Color(0f, 0f, 0f, 0.85f);
+            toast = rt.gameObject;
+            toast.SetActive(false);
+
+            var textRt = CreateRect(rt, "Text", Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            toastText = textRt.gameObject.AddComponent<Text>();
+            SetupText(toastText, 24, TextAnchor.MiddleCenter);
+        }
+
+        private void HandleBoxOpened(AxeInstance axeInst)
+        {
+            var def = RarityInfo.Table[axeInst.rarity];
+            toastText.text = "Obtenu : " + axeInst.axeName + "\n(" + def.label + ")";
+            toastText.color = def.color;
+            toast.SetActive(true);
+            toastTimer = 2.4f;
+
+            if (menuPanel.activeSelf && currentTab == "caisses")
+                RefreshMenuContent();
+        }
+
+        // ---------------------------------------------------------------
+        // HUD refresh
+        // ---------------------------------------------------------------
+
+        private void RefreshHudAxe()
+        {
+            var eq = inventory.Equipped;
+            if (eq == null || axeText == null) return;
+            var def = RarityInfo.Table[eq.rarity];
+            axeText.text = eq.axeName;
+            axeText.color = def.color;
+        }
+
+        private void RefreshHudBoxes()
+        {
+            if (boxText != null)
+                boxText.text = "Caisses : " + inventory.BoxCount + " / " + inventory.MaxBoxCapacity;
+            RefreshCaissesHeader();
         }
 
         private void UpdateMoney(int money)
